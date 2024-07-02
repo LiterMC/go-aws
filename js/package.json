@@ -1,0 +1,34 @@
+{
+  "name": "go-aws",
+  "version": "1.0.0",
+  "description": "Event based authorized websocket",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint . --ext .js,.cjs,.mjs,.ts,.cts,.mts --fix --ignore-path .gitignore",
+    "format": "prettier --write lib/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LiterMC/go-aws.git"
+  },
+  "keywords": [
+    "websocket"
+  ],
+  "author": "Kevin Z <zyxkad@gmail.com>",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/LiterMC/go-aws/issues"
+  },
+  "homepage": "https://github.com/LiterMC/go-aws#readme",
+  "files": [
+    "/dist"
+  ],
+  "devDependencies": {
+    "eslint": "^9.6.0",
+    "prettier": "^3.3.2",
+    "typescript": "^5.5.3"
+  }
+}

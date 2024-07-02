@@ -58,6 +58,10 @@ func (u *Upgrader) Upgrade(rw http.ResponseWriter, req *http.Request, respHeader
 	})
 	w.init()
 	if u.Authorizer != nil {
+		if err := w.WriteMessage("$auth_ready", nil); err != nil {
+			w.Close()
+			return nil, err
+		}
 		authTimeout := u.AuthTimeout
 		if authTimeout <= 0 {
 			authTimeout = time.Second * 10
@@ -68,9 +72,17 @@ func (u *Upgrader) Upgrade(rw http.ResponseWriter, req *http.Request, respHeader
 			return nil, err
 		}
 		if w.authData, err = u.Authorizer(authMsg); err != nil {
+			w.WriteMessage("$error", "auth failed")
 			w.Close()
 			return nil, err
 		}
+	}
+	if err := w.WriteMessage("$ready", &ReadyMessage{
+		PingInterval: w.pingInterval.Milliseconds(),
+		PongTimeout: w.pongTimeout.Milliseconds(),
+	}); err != nil {
+		w.Close()
+		return nil, err
 	}
 	return w, nil
 }

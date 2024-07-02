@@ -1,0 +1,15 @@
+{
+  "include": ["env.d.ts", "lib/**/*"],
+  "compilerOptions": {
+    "outDir": "dist",
+    "lib": [
+      "es2020",
+      "dom"
+    ],
+    "target": "es6",
+    "module": "es2020",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+  },
+}

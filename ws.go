@@ -57,6 +57,7 @@ type WebSocket struct {
 
 	readCh  chan *Message
 	writeCh chan *Message
+	flushSignal chan struct{}
 	authCh  chan *Message
 	ctx     context.Context
 	cancel  context.CancelCauseFunc
@@ -71,9 +72,11 @@ func (w *WebSocket) init() {
 	}
 	w.readCh = make(chan *Message, 8)
 	w.writeCh = make(chan *Message, 8)
+	w.flushSignal = make(chan struct{}, 1)
 	w.authCh = make(chan *Message, 1)
 	go w.readHelper()
 	go w.writeHelper()
+	// go w.pingHelper()
 }
 
 func (w *WebSocket) Context() context.Context {
@@ -163,6 +166,18 @@ func (w *WebSocket) WriteMessageContext(ctx context.Context, typ string, data an
 	}
 }
 
+// Flush flush the buffered messages to the opposite
+func (w *WebSocket) Flush() error {
+	if w.ctx.Err() != nil {
+		return context.Cause(w.ctx)
+	}
+	select {
+	case w.flushSignal <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 func (w *WebSocket) readAuthMessage(timeout time.Duration) (json.RawMessage, error) {
 	select {
 	case msg := <-w.authCh:
@@ -201,12 +216,15 @@ func (e *WSReadError) Unwrap() error {
 func (w *WebSocket) handleInternalMessage(msg *Message) {
 	switch msg.Type {
 	case "$ping":
-		go func(msg *Message) {
+		go func(data json.RawMessage) {
 			select {
-			case w.writeCh <- msg:
-			case <-time.After(w.pongTimeout):
+			case w.writeCh <- &Message{
+				Type: "$pong",
+				Data: data,
+			}:
+			case <-time.After(w.pingInterval + w.pongTimeout):
 			}
-		}(msg)
+		}(msg.Data)
 	case "$auth":
 		select {
 		case w.authCh <- msg:
@@ -278,6 +296,8 @@ MSG_LOOP:
 							continue
 						}
 						continue MSG_LOOP
+					case <-w.flushSignal:
+						break BATCH_LOOP
 					case <-minTimer.C:
 						break BATCH_LOOP
 					case <-maxTimer.C:
@@ -294,4 +314,26 @@ MSG_LOOP:
 			return
 		}
 	}
+}
+
+func (w *WebSocket) pingHelper() {
+	pingTicker := time.NewTicker(w.pingInterval)
+	defer pingTicker.Stop()
+	for {
+		select {
+		case <-pingTicker.C:
+			if err := w.WriteMessageContext(w.ctx, "$ping", time.Now().UnixMilli()); err != nil {
+				w.cancel(err)
+				return
+			}
+			w.Flush()
+		case <-w.ctx.Done():
+			return
+		}
+	}
+}
+
+type ReadyMessage struct {
+	PingInterval int64 `json:"pingInterval"`
+	PongTimeout int64 `json:"pongTimeout"`
 }
