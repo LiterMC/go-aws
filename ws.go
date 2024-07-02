@@ -55,12 +55,12 @@ type WebSocket struct {
 	minBatchTimeout time.Duration
 	maxBatchTimeout time.Duration
 
-	readCh  chan *Message
-	writeCh chan *Message
+	readCh      chan *Message
+	writeCh     chan *Message
 	flushSignal chan struct{}
-	authCh  chan *Message
-	ctx     context.Context
-	cancel  context.CancelCauseFunc
+	authCh      chan *Message
+	ctx         context.Context
+	cancel      context.CancelCauseFunc
 }
 
 func (w *WebSocket) init() {
@@ -213,6 +213,14 @@ func (e *WSReadError) Unwrap() error {
 	return e.Err
 }
 
+type WSRemoteError struct {
+	Message string
+}
+
+func (e *WSRemoteError) Error() string {
+	return "remote: " + e.Message
+}
+
 func (w *WebSocket) handleInternalMessage(msg *Message) {
 	switch msg.Type {
 	case "$ping":
@@ -230,6 +238,13 @@ func (w *WebSocket) handleInternalMessage(msg *Message) {
 		case w.authCh <- msg:
 		default:
 		}
+	case "$error":
+		var errMsg string
+		if err := msg.ParseData(&errMsg); err != nil {
+			w.cancel(&WSRemoteError{Message: "<Error when parsing remote error message: " + err.Error() + ">"})
+			return
+		}
+		w.cancel(&WSRemoteError{Message: errMsg})
 	}
 }
 
@@ -335,5 +350,5 @@ func (w *WebSocket) pingHelper() {
 
 type ReadyMessage struct {
 	PingInterval int64 `json:"pingInterval"`
-	PongTimeout int64 `json:"pongTimeout"`
+	PongTimeout  int64 `json:"pongTimeout"`
 }

@@ -28,72 +28,80 @@ export interface Options<D = unknown> {
 
 export default class AWS<D = unknown> extends EventTarget {
 	private opts: Options<D>
+	private _shouldActive: boolean = true
 	private _ws: WebSocket
 	private _error: any = undefined
 	private authTimeout: number = 10000
 	private pingInterval: number = 15000
 	private pongTimeout: number = 15000
 	private _readyPromise: Promise<void>
-	private _readyResolver: () => void
+	private _readyResolver: () => void = () => {}
+	private _readyRejector: (err: any) => void = () => {}
 	private _writing: WrappedMsg[] = []
 	private _senderId: ReturnType<typeof setTimeout> | null = null
 	private _pingTicker: ReturnType<typeof setInterval> | null = null
 	private _pongTimer: ReturnType<typeof setInterval> | null = null
+	private redialCount: number = 0
+	private redialTimer: ReturnType<typeof setTimeout> | null = null
 
 	constructor(opts: Options<D>) {
 		super()
 		this.opts = opts
 		this._ws = new WebSocket(this.opts.url, this.opts.protocols)
-		this._readyResolver = () => {}
-		this._readyPromise = new Promise((resolve, reject) => {
-			this._readyResolver = () => resolve(undefined)
-			setTimeout(() => reject('auth timeout'), this.authTimeout)
-		}).then(() => {
-			this._pingTicker = setInterval(() => {
-				this.send('$ping', Date.now(), true)
-			}, this.pingInterval)
-		})
-
 		this._ws.addEventListener('close', () => this.onWSClose())
-		this._ws.addEventListener('message', (event: MessageEvent) => {
-			const msgs = event.data.split('\n')
-			for (const msg of msgs) {
-				const msgTrimmed = msg.trim()
-				if (msgTrimmed.length) {
-					const { t: typ, d: data } = JSON.parse(msgTrimmed) as WrappedMsg;
-					this.onMessage(typ, data);
-				}
+		this._ws.addEventListener('message', (event) => this.onWSMessage(event))
+
+		this._readyPromise = this._createReadyPromise()
+	}
+
+	private _createReadyPromise(): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const rejectTimer = setTimeout(() => reject('auth timeout'), this.authTimeout)
+			this._readyResolver = () => {
+				clearTimeout(rejectTimer)
+				resolve(undefined)
+			}
+			this._readyRejector = (err: any) => {
+				clearTimeout(rejectTimer)
+				reject(err)
 			}
 		})
 	}
 
-	private reinitWS(): void {
-		this._ws.close()
+	private reopenWS(): void {
+		if (this._ws.readyState !== WebSocket.CLOSING && this._ws.readyState !== WebSocket.CLOSED) {
+			throw new Error('Trying to reconnect the websocket that has not been disconnected')
+		}
+		clearTimeout(this.redialTimer)
+		this.redialTimer = null
+		this.redialCount++
 		this._ws = new WebSocket(this.opts.url, this.opts.protocols)
-		this._readyPromise = new Promise((resolve, reject) => {
-			const rejectTimer = setTimeout(() => reject('auth timeout'), this.authTimeout)
-			this._readyResolver = () => {
-				clearTimeout(rejectTimer)
-				resolve()
-			}
-		})
-
 		this._ws.addEventListener('close', () => this.onWSClose())
-		this._ws.addEventListener('message', (event: MessageEvent) => {
-			const msgs = event.data.split('\n')
-			for (const msg of msgs) {
-				const {t: typ, d: data} = JSON.parse(msg) as WrappedMsg
-				this.onMessage(typ, data)
-			}
-		})
+		this._ws.addEventListener('message', (event) => this.onWSMessage(event))
+
+		this._readyPromise = this._createReadyPromise()
 	}
 
 	get ws(): WebSocket {
 		return this._ws
 	}
 
+	get shouldActive(): boolean {
+		return this._shouldActive
+	}
+
 	ready(): Promise<void> {
 		return this._readyPromise
+	}
+
+	open(): void {
+		this._shouldActive = true
+		this.reopenWS()
+	}
+
+	close(): void {
+		this._shouldActive = false
+		this._ws.close()
 	}
 
 	on<T = any>(event: string, listener: Listener<T>, options?: AddEventListenerOptions) {
@@ -133,11 +141,28 @@ export default class AWS<D = unknown> extends EventTarget {
 	}
 
 	private onWSClose(): void {
+		this._readyRejector('websocket closed')
 		if (this._pingTicker) {
 			clearInterval(this._pingTicker)
 			this._pingTicker = null
 		}
 		this.dispatchEvent(new AWSMessageEvent('$close', null))
+		if (!this._shouldActive) {
+			return
+		}
+		const redialTimeout = this.redialCount == 0 ? 0 : Math.min(1000 * 1.6 ** this.redialCount, 1000 * 60)
+		this.redialTimer = setTimeout(() => this.reopenWS(), redialTimeout)
+	}
+
+	private onWSMessage(event: MessageEvent): void {
+		const msgs = event.data.split('\n')
+		for (const msg of msgs) {
+			const msgTrimmed = msg.trim()
+			if (msgTrimmed.length) {
+				const { t: typ, d: data } = JSON.parse(msgTrimmed) as WrappedMsg;
+				this.onMessage(typ, data);
+			}
+		}
 	}
 
 	private onInternalMessage(typ: string, data: any) {
@@ -160,6 +185,9 @@ export default class AWS<D = unknown> extends EventTarget {
 			const readyData = data as ReadyMessage
 			this.pingInterval = readyData.pingInterval
 			this.pongTimeout = readyData.pongTimeout
+			this._pingTicker = setInterval(() => {
+				this.send('$ping', Date.now(), true)
+			}, this.pingInterval)
 			this._readyResolver()
 			break
 		}

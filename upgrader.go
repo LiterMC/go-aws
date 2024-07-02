@@ -19,11 +19,14 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+var ErrNoSubprotocol = errors.New("No matching subprotocol")
 
 type Upgrader struct {
 	// Upgrader should never be nil
@@ -44,6 +47,19 @@ func (u *Upgrader) Upgrade(rw http.ResponseWriter, req *http.Request, respHeader
 	ws, err := u.Upgrader.Upgrade(rw, req, respHeader)
 	if err != nil {
 		return nil, err
+	}
+	if len(u.Upgrader.Subprotocols) > 0 && respHeader.Get("Sec-Websocket-Protocol") == "" {
+		sp := ws.Subprotocol()
+		ok := false
+		for _, p := range u.Upgrader.Subprotocols {
+			if p == sp {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, ErrNoSubprotocol
+		}
 	}
 	w := &WebSocket{
 		ws:              ws,
@@ -79,7 +95,7 @@ func (u *Upgrader) Upgrade(rw http.ResponseWriter, req *http.Request, respHeader
 	}
 	if err := w.WriteMessage("$ready", &ReadyMessage{
 		PingInterval: w.pingInterval.Milliseconds(),
-		PongTimeout: w.pongTimeout.Milliseconds(),
+		PongTimeout:  w.pongTimeout.Milliseconds(),
 	}); err != nil {
 		w.Close()
 		return nil, err
