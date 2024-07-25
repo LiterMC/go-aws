@@ -1,4 +1,3 @@
-
 interface WrappedMsg {
 	t: string
 	d: any
@@ -23,7 +22,7 @@ export type Listener<T = any> = (msg: MessageEvent<T>) => void
 export interface Options<D = unknown> {
 	url: string | URL
 	protocols?: string | string[]
-	auth?: D extends Function ? never : (D | ((ws: AWS) => D))
+	auth?: D extends Function ? never : D | ((ws: AWS) => D)
 }
 
 export default class AWS<D = unknown> extends EventTarget {
@@ -124,7 +123,10 @@ export default class AWS<D = unknown> extends EventTarget {
 			}
 			this.sendCachedMessages()
 		} else if (!this._senderId) {
-			this._senderId = setTimeout(() => this.sendCachedMessages(), 20)
+			this._senderId = setTimeout(() => {
+				this._senderId = null
+				this.sendCachedMessages()
+			}, 20)
 		}
 	}
 
@@ -150,7 +152,8 @@ export default class AWS<D = unknown> extends EventTarget {
 		if (!this._shouldActive) {
 			return
 		}
-		const redialTimeout = this.redialCount == 0 ? 0 : Math.min(1000 * 1.6 ** this.redialCount, 1000 * 60)
+		const redialTimeout =
+			this.redialCount == 0 ? 0 : Math.min(1000 * 1.6 ** this.redialCount, 1000 * 60)
 		this.redialTimer = setTimeout(() => this.reopenWS(), redialTimeout)
 	}
 
@@ -159,37 +162,38 @@ export default class AWS<D = unknown> extends EventTarget {
 		for (const msg of msgs) {
 			const msgTrimmed = msg.trim()
 			if (msgTrimmed.length) {
-				const { t: typ, d: data } = JSON.parse(msgTrimmed) as WrappedMsg;
-				this.onMessage(typ, data);
+				const { t: typ, d: data } = JSON.parse(msgTrimmed) as WrappedMsg
+				this.onMessage(typ, data)
 			}
 		}
 	}
 
 	private onInternalMessage(typ: string, data: any) {
 		switch (typ) {
-		case '$ping':
-			this.send('$pong', data, true)
-			break
-		case '$pong':
-			break
-		case '$error':
-			this._error = data
-			break
-		case '$auth_ready':
-			this.doAuth()
-			break
-		case '$auth':
-			// server side message
-			break
-		case '$ready':
-			const readyData = data as ReadyMessage
-			this.pingInterval = readyData.pingInterval
-			this.pongTimeout = readyData.pongTimeout
-			this._pingTicker = setInterval(() => {
-				this.send('$ping', Date.now(), true)
-			}, this.pingInterval)
-			this._readyResolver()
-			break
+			case '$ping':
+				this.send('$pong', data, true)
+				break
+			case '$pong':
+				break
+			case '$error':
+				this._error = data
+				break
+			case '$auth_ready':
+				this.doAuth()
+				break
+			case '$auth':
+				// server side message
+				break
+			case '$ready':
+				const readyData = data as ReadyMessage
+				this.pingInterval = readyData.pingInterval
+				this.pongTimeout = readyData.pongTimeout
+				this._pingTicker = setInterval(() => {
+					this.send('$ping', Date.now(), true)
+				}, this.pingInterval)
+				this._readyResolver()
+				this.sendCachedMessages()
+				break
 		}
 	}
 
@@ -208,7 +212,12 @@ export default class AWS<D = unknown> extends EventTarget {
 	}
 
 	private sendCachedMessages(): void {
-		this._senderId = null
+		if (this._ws.readyState !== WebSocket.OPEN) {
+			if (this._ws.readyState !== WebSocket.CONNECTING) {
+				this._writing = []
+			}
+			return
+		}
 		let msgs = ''
 		for (const msg of this._writing) {
 			msgs += JSON.stringify(msg) + '\n'
