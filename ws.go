@@ -76,7 +76,7 @@ func (w *WebSocket) init() {
 	w.authCh = make(chan *Message, 1)
 	go w.readHelper()
 	go w.writeHelper()
-	// go w.pingHelper()
+	go w.pingHelper()
 }
 
 func (w *WebSocket) Context() context.Context {
